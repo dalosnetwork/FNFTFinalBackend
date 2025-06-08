@@ -1,0 +1,20 @@
+{
+    "name": "NFT NAME",
+    "description": "Description",
+    "attributes": [
+      {
+        "trait_type": "Customer ID",
+        "value": "123456789"
+      },
+      {
+        "trait_type": "Certificate ID",
+        "value": "CERT-987654"
+      },
+      {
+        "trait_type": "Gram Amount",
+        "value": "5.00"
+      }
+    ],
+    "image": "https://link.to/image.png"
+  }
+  

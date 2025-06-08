@@ -1,0 +1,16 @@
+{
+    "name": "NFT NAME",
+    "description": "Description",
+    "attributes": [
+      {
+        "token_address": "TokenAddress",
+        "value": "Value"
+      },
+      {
+        "token_address": "TokenAddress2",
+        "value": "Value2"
+      }
+    ],
+    "image": "https://link.to/image.png"
+  }
+  
