@@ -1,21 +1,26 @@
 from web3 import Web3
 import json
-from app.config import settings
 from eth_abi import decode
+from app.config import settings
 
+# Web3 bağlantısı
 web3 = Web3(Web3.HTTPProvider(settings.blockchain_rpc_url))
-contract_address = settings.contract_address
+contract_address = Web3.to_checksum_address(settings.contract_address)
+wallet_address = Web3.to_checksum_address(settings.wallet_address)
+private_key = settings.wallet_private_key
 
+# Ana sözleşme
 with open('app/contracts/abi/FNFTCertABI.json') as f:
     abi = json.load(f)
-
 contract = web3.eth.contract(address=contract_address, abi=abi)
 
-def create_new_certificate_onchain(metadata: str):
-    wallet_address = settings.wallet_address
-    private_key = settings.wallet_private_key
+# ✅ Güncel nonce alma fonksiyonu
+def get_fresh_nonce():
+    return web3.eth.get_transaction_count(wallet_address, 'pending')
 
-    nonce = web3.eth.get_transaction_count(wallet_address)
+# ✅ Sertifika oluşturma
+def create_new_certificate_onchain(metadata: str):
+    nonce = get_fresh_nonce()
     txn = contract.functions.create_new_cert(json.dumps(metadata)).build_transaction({
         'from': wallet_address,
         'nonce': nonce,
@@ -23,119 +28,89 @@ def create_new_certificate_onchain(metadata: str):
         'gasPrice': web3.to_wei('5', 'gwei')
     })
 
-    signed_txn = web3.eth.account.sign_transaction(txn, private_key=private_key)
-    tx_hash = web3.eth.send_raw_transaction(signed_txn.raw_transaction)
-
-    # Get NFT ID
+    signed = web3.eth.account.sign_transaction(txn, private_key=private_key)
+    tx_hash = web3.eth.send_raw_transaction(signed.rawTransaction)
     receipt = web3.eth.wait_for_transaction_receipt(tx_hash)
-    event_signature_hash = web3.keccak(text="CertificateCreated(uint256)").hex()
-    nft_id = None
 
-    for log in receipt.logs:
-        if log.topics[0].hex() == event_signature_hash:
-            nft_id = Web3.to_int(log.data)
-            break
+    event_sig = web3.keccak(text="CertificateCreated(uint256)").hex()
+    nft_id = next(
+        (Web3.to_int(log.data) for log in receipt.logs if log.topics[0].hex() == event_sig),
+        None
+    )
 
     return web3.to_hex(tx_hash), nft_id
 
-def create_new_fnft_onchain(nft_id: int, token_name: str, token_symbol: str, total_supply: int):
-    wallet_address = settings.wallet_address
-    private_key = settings.wallet_private_key
-
-    nonce = web3.eth.get_transaction_count(wallet_address)
-    txn = contract.functions.create_new_fnft(nft_id, token_name, token_symbol, total_supply).build_transaction({
+# ✅ FNFT oluşturma
+def create_new_fnft_onchain(nft_id: int, name: str, symbol: str, supply: int):
+    nonce = get_fresh_nonce()
+    txn = contract.functions.create_new_fnft(nft_id, name, symbol, supply).build_transaction({
         'from': wallet_address,
         'nonce': nonce,
         'gas': 2000000,
         'gasPrice': web3.to_wei('5', 'gwei')
     })
 
-    signed_txn = web3.eth.account.sign_transaction(txn, private_key=private_key)
-    tx_hash = web3.eth.send_raw_transaction(signed_txn.raw_transaction)
-
+    signed = web3.eth.account.sign_transaction(txn, private_key=private_key)
+    tx_hash = web3.eth.send_raw_transaction(signed.rawTransaction)
     receipt = web3.eth.wait_for_transaction_receipt(tx_hash)
-    event_signature_hash = web3.keccak(text="FNFTCreated(uint256,string,string,uint256,address)").hex()
 
-    erc20_address = None
-
+    event_sig = web3.keccak(text="FNFTCreated(uint256,string,string,uint256,address)").hex()
     for log in receipt.logs:
-        if log.topics[0].hex() == event_signature_hash:
-            decoded = decode(
-                ['uint256', 'string', 'string', 'uint256', 'address'],
-                bytes(log.data)  # strip "0x" and decode hex
-            )
-            erc20_address = decoded[4]
-            break
+        if log.topics[0].hex() == event_sig:
+            decoded = decode(['uint256', 'string', 'string', 'uint256', 'address'], bytes(log.data))
+            return web3.to_hex(tx_hash), decoded[4]
 
-    return web3.to_hex(tx_hash), erc20_address
+    return web3.to_hex(tx_hash), None
 
-
-def approve_fnft_spending(erc20_address: str, amount=0):
-    wallet_address = settings.wallet_address
-    private_key = settings.wallet_private_key
-
+# ✅ ERC20 approve işlemi
+def approve_fnft_spending(erc20_address: str, amount: int = 0):
     erc20_abi = [
         {
-            "constant": False,
+            "name": "approve",
+            "type": "function",
             "inputs": [
                 {"name": "_spender", "type": "address"},
                 {"name": "_value", "type": "uint256"}
             ],
-            "name": "approve",
             "outputs": [{"name": "", "type": "bool"}],
-            "type": "function"
+            "constant": False
         },
         {
-            "constant": True,
-            "inputs": [],
             "name": "totalSupply",
+            "type": "function",
+            "inputs": [],
             "outputs": [{"name": "", "type": "uint256"}],
-            "type": "function"
+            "constant": True
         }
     ]
 
-    erc20_contract = web3.eth.contract(
-        address=Web3.to_checksum_address(erc20_address),
-        abi=erc20_abi
-    )
+    erc20 = web3.eth.contract(address=Web3.to_checksum_address(erc20_address), abi=erc20_abi)
 
     if amount == 0:
-        # ✅ 1. totalSupply kadar onay ver
-        amount = erc20_contract.functions.totalSupply().call()
-    else:
-        amount = amount
+        amount = erc20.functions.totalSupply().call()
 
-    nonce = web3.eth.get_transaction_count(wallet_address)
-
-    txn = erc20_contract.functions.approve(
-        Web3.to_checksum_address(settings.contract_address),  # spender = Router
-        amount
-    ).build_transaction({
+    nonce = get_fresh_nonce()
+    txn = erc20.functions.approve(contract_address, amount).build_transaction({
         'from': wallet_address,
         'nonce': nonce,
         'gas': 100000,
         'gasPrice': web3.to_wei('5', 'gwei')
     })
 
-    signed_txn = web3.eth.account.sign_transaction(txn, private_key=private_key)
-    tx_hash = web3.eth.send_raw_transaction(signed_txn.raw_transaction)
-
+    signed = web3.eth.account.sign_transaction(txn, private_key=private_key)
+    tx_hash = web3.eth.send_raw_transaction(signed.rawTransaction)
     receipt = web3.eth.wait_for_transaction_receipt(tx_hash)
+
     if receipt.status != 1:
         raise Exception("Approve transaction failed")
 
-    return tx_hash.hex()
+    return web3.to_hex(tx_hash)
 
-
+# ✅ FNFT redeem işlemi
 def redeem_all_nft_with_fnft_onchain(erc20_address: str):
-    wallet_address = settings.wallet_address
-    private_key = settings.wallet_private_key
-
-    # ✅ 1. Önce approve ver
     approve_fnft_spending(erc20_address)
 
-    # ✅ 2. Sonra redeem işlemi
-    nonce = web3.eth.get_transaction_count(wallet_address)
+    nonce = get_fresh_nonce()
     txn = contract.functions.redeem_all_nft_with_fnft(Web3.to_checksum_address(erc20_address)).build_transaction({
         'from': wallet_address,
         'nonce': nonce,
@@ -143,59 +118,49 @@ def redeem_all_nft_with_fnft_onchain(erc20_address: str):
         'gasPrice': web3.to_wei('5', 'gwei')
     })
 
-    signed_txn = web3.eth.account.sign_transaction(txn, private_key=private_key)
-    tx_hash = web3.eth.send_raw_transaction(signed_txn.raw_transaction)
+    signed = web3.eth.account.sign_transaction(txn, private_key=private_key)
+    tx_hash = web3.eth.send_raw_transaction(signed.rawTransaction)
     receipt = web3.eth.wait_for_transaction_receipt(tx_hash)
 
-    event_signature_hash = web3.keccak(text="Redeemed(address,uint256)").hex()
-    token_id = None
-
-    for log in receipt.logs:
-        if log["topics"][0].hex() == event_signature_hash:
-            token_id = Web3.to_int(log["data"])
+    event_sig = web3.keccak(text="Redeemed(address,uint256)").hex()
+    token_id = next(
+        (Web3.to_int(log.data) for log in receipt.logs if log.topics[0].hex() == event_sig),
+        None
+    )
 
     return {
         "tx_hash": web3.to_hex(tx_hash),
         "token_id": token_id
     }
 
+# ✅ FNFT merge işlemi
 def merge_fnft_onchain(erc20_addresses: list[str], amounts: list[int], metadata: str, is_sbt: bool):
-    wallet_address = settings.wallet_address
-    private_key = settings.wallet_private_key
+    checksummed = [Web3.to_checksum_address(addr) for addr in erc20_addresses]
 
-    for i in range(len(erc20_addresses)):
-        erc20_addresses[i] = Web3.to_checksum_address(erc20_addresses[i])
-        approve_fnft_spending(erc20_addresses[i], amounts[i])
+    for i, addr in enumerate(checksummed):
+        approve_fnft_spending(addr, amounts[i])
 
-    nonce = web3.eth.get_transaction_count(wallet_address)
-
-    txn = contract.functions.merge_fnft(
-        erc20_addresses,
-        amounts,
-        metadata,
-        is_sbt
-    ).build_transaction({
+    nonce = get_fresh_nonce()
+    txn = contract.functions.merge_fnft(checksummed, amounts, metadata, is_sbt).build_transaction({
         'from': wallet_address,
         'nonce': nonce,
         'gas': 3000000,
         'gasPrice': web3.to_wei('5', 'gwei')
     })
 
-    signed_txn = web3.eth.account.sign_transaction(txn, private_key=private_key)
-    tx_hash = web3.eth.send_raw_transaction(signed_txn.raw_transaction)
-
-    # 🔎 Receipt ile FNFTMerged eventini dinle
+    signed = web3.eth.account.sign_transaction(txn, private_key=private_key)
+    tx_hash = web3.eth.send_raw_transaction(signed.rawTransaction)
     receipt = web3.eth.wait_for_transaction_receipt(tx_hash)
-    event_signature = web3.keccak(text="FNFTMerged(uint256,bool)").hex()
 
+    event_sig = web3.keccak(text="FNFTMerged(uint256,bool)").hex()
     token_id = None
-    is_sbt_value = None
+    sbt_flag = None
 
     for log in receipt.logs:
-        if log["topics"][0].hex() == event_signature:
-            decoded = decode(['uint256', 'bool'], bytes(log["data"]))
+        if log.topics[0].hex() == event_sig:
+            decoded = decode(['uint256', 'bool'], bytes(log.data))
             token_id = decoded[0]
-            is_sbt_value = decoded[1]
+            sbt_flag = decoded[1]
             break
 
     if token_id is None:
@@ -204,5 +169,5 @@ def merge_fnft_onchain(erc20_addresses: list[str], amounts: list[int], metadata:
     return {
         "tx_hash": web3.to_hex(tx_hash),
         "token_id": token_id,
-        "is_sbt": is_sbt_value
+        "is_sbt": sbt_flag
     }
