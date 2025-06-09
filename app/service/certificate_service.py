@@ -22,8 +22,10 @@ def get_certificates(
     gram_min: int | None,
     gram_max: int | None,
     search: str | None,
+    sort_by: str,
+    sort_order: str,
 ) -> dict:
-    """Certificate kayıtlarını filtre + arama + pagination ile döner."""
+    """Certificate kayıtlarını filtre + arama + sıralama + pagination ile döner."""
     q = db.query(Certificate)
 
     # tarih filtreleri
@@ -53,12 +55,23 @@ def get_certificates(
             )
         )
 
+    # sıralama dinamik
+    sort_by_field = {
+        "id": Certificate.id,
+        "date": Certificate.date,
+        "gram": Certificate.gram,
+    }.get(sort_by, Certificate.id)
+
+    if sort_order == "asc":
+        q = q.order_by(sort_by_field.asc())
+    else:
+        q = q.order_by(sort_by_field.desc())
+
     total_items = q.count()
     total_pages = (total_items + per_page - 1) // per_page
 
     items: List[Certificate] = (
-        q.order_by(Certificate.date.desc())
-        .offset((page - 1) * per_page)
+        q.offset((page - 1) * per_page)
         .limit(per_page)
         .all()
     )

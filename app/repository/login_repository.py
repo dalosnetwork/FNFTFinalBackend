@@ -17,6 +17,3 @@ class LoginRepository(BaseRepository):
             return None
 
         return user
-
-    def authenticate_by_api_key(self, api_key: str):
-        return self.db.query(LoginInfo).filter_by(api_key=api_key).first()

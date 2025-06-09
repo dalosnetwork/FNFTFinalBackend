@@ -22,8 +22,10 @@ def get_transactions(
     gram_min: int | None,
     gram_max: int | None,
     search: str | None,
+    sort_by: str,
+    sort_order: str,
 ) -> dict:
-    """Merge işlemlerini filtre + arama + pagination ile döner."""
+    """Merge işlemlerini filtre + arama + sıralama + pagination ile döner."""
     q = db.query(Merge)
 
     # tarih filtreleri
@@ -48,7 +50,7 @@ def get_transactions(
             )
         )
 
-    all_items: List[Merge] = q.order_by(Merge.date.desc()).all()
+    all_items: List[Merge] = q.all()
 
     results: List[Dict] = []
     for m in all_items:
@@ -71,6 +73,16 @@ def get_transactions(
                 "customer_id": m.customer_id,
             }
         )
+
+    # sıralama
+    reverse = sort_order.lower() == "desc"
+
+    if sort_by == "date":
+        results.sort(key=lambda x: x["date"], reverse=reverse)
+    elif sort_by == "gram":
+        results.sort(key=lambda x: x["gram"], reverse=reverse)
+    else:  # default to id
+        results.sort(key=lambda x: x["id"], reverse=True)
 
     total_items = len(results)
     total_pages = (total_items + per_page - 1) // per_page

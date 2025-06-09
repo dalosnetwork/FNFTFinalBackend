@@ -19,6 +19,8 @@ def get_certificates(
     gram_min: int | None = Query(None, ge=0),
     gram_max: int | None = Query(None, ge=0),
     search: str | None = Query(None),
+    sort_by: str = Query("id"),
+    sort_order: str = Query("desc"),
 ):
     return cert_service(
         db,
@@ -29,4 +31,6 @@ def get_certificates(
         gram_min=gram_min,
         gram_max=gram_max,
         search=search,
+        sort_by=sort_by,
+        sort_order=sort_order,
     )

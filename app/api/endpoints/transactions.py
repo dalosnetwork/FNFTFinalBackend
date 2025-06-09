@@ -7,7 +7,6 @@ from app.service.transaction_service import get_transactions as tx_service
 
 router = APIRouter()
 
-
 @router.get("/get_transactions")
 def get_transactions(
     user_id: int = Depends(get_current_user),
@@ -19,6 +18,8 @@ def get_transactions(
     gram_min: int | None = Query(None, ge=0),
     gram_max: int | None = Query(None, ge=0),
     search: str | None = Query(None),
+    sort_by: str = Query("id"),  # "id", "date", "gram"
+    sort_order: str = Query("desc"),  # "asc", "desc"
 ):
     return tx_service(
         db,
@@ -29,4 +30,6 @@ def get_transactions(
         gram_min=gram_min,
         gram_max=gram_max,
         search=search,
+        sort_by=sort_by,
+        sort_order=sort_order,
     )
